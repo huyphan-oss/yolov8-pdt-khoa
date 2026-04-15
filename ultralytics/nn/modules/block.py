@@ -2066,55 +2066,51 @@ class RealNVP(nn.Module):
         z, log_det = self.backward_p(x)
         return self.prior.log_prob(z) + log_det
 
+
 # ==========================================
 # THÊM MODULE DUAL-SK TỪ ĐÂY
 # ==========================================
-#import math
+# import math
 import torch
 import torch.nn as nn
 
+
 class SKConv(nn.Module):
-    """Selective Kernel Convolution - Tự động điều chỉnh Receptive Field"""
+    """Selective Kernel Convolution - Tự động điều chỉnh Receptive Field."""
+
     def __init__(self, c1, M=2, r=16, L=32):
         super().__init__()
         d = max(int(c1 / r), L)
         self.M = M
         self.c1 = c1
-        
-        self.convs = nn.ModuleList([
-            Conv(c1, c1, k=3, s=1, p=1+i, d=1+i, g=c1) for i in range(M)
-        ])
-        
+
+        self.convs = nn.ModuleList([Conv(c1, c1, k=3, s=1, p=1 + i, d=1 + i, g=c1) for i in range(M)])
+
         self.gap = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Sequential(
-            nn.Conv2d(c1, d, kernel_size=1, bias=False),
-            nn.BatchNorm2d(d),
-            nn.SiLU()
-        )
+        self.fc = nn.Sequential(nn.Conv2d(c1, d, kernel_size=1, bias=False), nn.BatchNorm2d(d), nn.SiLU())
         self.fcs = nn.ModuleList([nn.Conv2d(d, c1, kernel_size=1) for _ in range(M)])
         self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x):
-        feats = torch.stack([conv(x) for conv in self.convs], dim=1) 
-        U = torch.sum(feats, dim=1) 
-        S = self.gap(U) 
-        Z = self.fc(S) 
-        
-        attention_vectors = torch.stack([fc(Z) for fc in self.fcs], dim=1) 
+        feats = torch.stack([conv(x) for conv in self.convs], dim=1)
+        U = torch.sum(feats, dim=1)
+        S = self.gap(U)
+        Z = self.fc(S)
+
+        attention_vectors = torch.stack([fc(Z) for fc in self.fcs], dim=1)
         attention_vectors = self.softmax(attention_vectors)
-        V = torch.sum(feats * attention_vectors, dim=1) 
+        V = torch.sum(feats * attention_vectors, dim=1)
         return V
 
+
 class DualPathSKBlock(nn.Module):
-    """Khối luồng kép: Luồng không gian (Spatial) + Luồng ngữ cảnh (Context)"""
+    """Khối luồng kép: Luồng không gian (Spatial) + Luồng ngữ cảnh (Context)."""
+
     def __init__(self, c1, c2):
         super().__init__()
         c_ = c2 // 2
         self.path1 = Conv(c1, c_, k=3)
-        self.path2 = nn.Sequential(
-            Conv(c1, c_, k=1),
-            SKConv(c_)
-        )
+        self.path2 = nn.Sequential(Conv(c1, c_, k=1), SKConv(c_))
         self.fuse = Conv(c2, c2, k=1)
 
     def forward(self, x):
@@ -2122,9 +2118,10 @@ class DualPathSKBlock(nn.Module):
         p2 = self.path2(x)
         return self.fuse(torch.cat((p1, p2), dim=1))
 
+
 class EMA(nn.Module):
     def __init__(self, channels, factor=32):
-        super(EMA, self).__init__()
+        super().__init__()
         self.groups = factor
         assert channels // self.groups > 0
         self.softmax = nn.Softmax(dim=-1)
@@ -2144,12 +2141,13 @@ class EMA(nn.Module):
         group_mag_conv = self.conv1x1(hw_avg)
         h_sig, w_sig = torch.split(group_mag_conv, [h, w], dim=2)
         group_x = group_x * h_sig.sigmoid() * w_sig.permute(0, 1, 3, 2).sigmoid()
-        
+
         x_channels_wise = self.agp(group_x)
         x_spatial_wise = self.conv3x3(group_x)
         weights = self.softmax((x_channels_wise * x_spatial_wise).view(b * self.groups, -1, h * w))
         out = (weights.view(b * self.groups, -1, h, w) * group_x).view(b, c, h, w)
         return out
+
 
 class C2f_EMA(nn.Module):
     def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):
@@ -2164,6 +2162,8 @@ class C2f_EMA(nn.Module):
         y = list(self.cv1(x).chunk(2, 1))
         y.extend(m(y[-1]) for m in self.m)
         return self.ema(self.cv2(torch.cat(y, 1)))
+
+
 # ==========================================
 # KẾT THÚC MODULE DUAL-SK
 # ==========================================
