@@ -2073,52 +2073,61 @@ class RealNVP(nn.Module):
         z, log_det = self.backward_p(x)
         return self.prior.log_prob(z) + log_det
     
-class DualSKP(nn.Module):
-    def __init__(self, c1, c2, n=1):
+
+import math
+import torch
+import torch.nn as nn
+
+try:
+    from ultralytics.nn.modules.conv import Conv
+except Exception:
+    pass
+
+
+class GhostConvLite(nn.Module):
+    """Ghost convolution block for reducing computation."""
+
+    def __init__(self, c1, c2, k=1, s=1, ratio=2, act=True):
         super().__init__()
+        self.c2 = c2
+        c_ = math.ceil(c2 / ratio)
+        self.primary_conv = Conv(c1, c_, k, s, act=act)
+        self.cheap_operation = Conv(c_, c_, 3, 1, g=c_, act=act)
 
-        self.cv1 = Conv(c1, c2, 1, 1)
+    def forward(self, x):
+        y = self.primary_conv(x)
+        y = torch.cat((y, self.cheap_operation(y)), dim=1)
+        return y[:, :self.c2, :, :]
 
-        # texture kernels
-        self.k3 = nn.Conv2d(c2,c2,3,1,1,groups=c2)
-        self.k5 = nn.Conv2d(c2,c2,5,1,2,groups=c2)
 
-        self.mix = Conv(c2*2,c2,1,1)
+class GhostBottleneckLite(nn.Module):
+    """Lightweight bottleneck using GhostConvLite."""
 
-        # color-channel attention
-        r=max(c2//4,16)
-        self.ca = nn.Sequential(
-            nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(c2,r,1),
-            nn.ReLU(),
-            nn.Conv2d(r,c2,1),
-            nn.Sigmoid()
+    def __init__(self, c1, c2, shortcut=True):
+        super().__init__()
+        self.cv1 = GhostConvLite(c1, c2, 1, 1)
+        self.cv2 = GhostConvLite(c2, c2, 3, 1)
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        y = self.cv2(self.cv1(x))
+        return x + y if self.add else y
+
+
+class DualSKP(nn.Module):
+    """C2f block using Ghost bottlenecks."""
+
+    def __init__(self, c1, c2, n=1, shortcut=False, e=0.5):
+        super().__init__()
+        self.c = int(c2 * e)
+        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
+        self.cv2 = Conv((2 + n) * self.c, c2, 1)
+        self.m = nn.ModuleList(
+            GhostBottleneckLite(self.c, self.c, shortcut) for _ in range(n)
         )
 
-        # local anomaly spatial
-        self.sa = nn.Sequential(
-            nn.Conv2d(2,1,5,padding=2),
-            nn.Sigmoid()
-        )
-
-        self.out = Conv(c2,c2,1,1)
-
-    def forward(self,x):
-
-        x=self.cv1(x)
-
-        a=self.k3(x)
-        b=self.k5(x)
-
-        f=self.mix(torch.cat([a,b],1))
-
-        # channel
-        f=f*self.ca(f)
-
-        # spatial
-        avg=f.mean(1,keepdim=True)
-        mx=f.max(1,keepdim=True)[0]
-
-        f=f*self.sa(torch.cat([avg,mx],1))
-
-        return self.out(f+x)
+    def forward(self, x):
+        y = list(self.cv1(x).chunk(2, 1))
+        for m in self.m:
+            y.append(m(y[-1]))
+        return self.cv2(torch.cat(y, 1))   
