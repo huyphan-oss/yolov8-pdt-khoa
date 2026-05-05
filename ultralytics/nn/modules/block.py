@@ -2073,28 +2073,54 @@ class RealNVP(nn.Module):
         z, log_det = self.backward_p(x)
         return self.prior.log_prob(z) + log_det
     
-class DualSKP(nn.Module):
-    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):
+
+import torch
+import torch.nn as nn
+import math
+
+# ===== Ghost Conv (lightweight) =====
+class GhostConv(nn.Module):
+    def __init__(self, c1, c2, k=1, s=1, ratio=2):
         super().__init__()
-        # Giảm channel trung gian để giảm FLOPs (e=0.5 là mặc định, có thể giảm xuống 0.25 nếu cần cực nhẹ)
-        self.c = int(c2 * e) 
-        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
-        self.cv2 = Conv((2 + n) * self.c, c2, 1)
-        
-        # Sử dụng groups=self.c để biến Conv 3x3 thành Depthwise Conv giúp giảm FLOPs cực mạnh
-        # Chúng ta chỉ dùng 1 Conv 3x3 thay vì 2 trong mỗi bottleneck để tập trung vào tốc độ
-        self.m = nn.ModuleList(
-            nn.Sequential(
-                Conv(self.c, self.c, 3, g=self.c), # Depthwise
-                Conv(self.c, self.c, 1)            # Pointwise (để mix channel)
-            ) if shortcut else 
-            nn.Sequential(
-                Conv(self.c, self.c, 3, g=self.c)
-            ) for _ in range(n)
-        )
+        c_ = math.ceil(c2 / ratio)
+        self.primary = nn.Conv2d(c1, c_, k, s, k // 2, bias=False)
+        self.cheap = nn.Conv2d(c_, c2 - c_, 3, 1, 1, groups=c_, bias=False)
+        self.bn = nn.BatchNorm2d(c2)
+        self.act = nn.SiLU()
 
     def forward(self, x):
-        # Giữ nguyên cơ chế split/concatenate đặc trưng của C2f
-        y = list(self.cv1(x).chunk(2, 1))
-        y.extend(m(y[-1]) for m in self.m)
+        y = self.primary(x)
+        z = self.cheap(y)
+        out = torch.cat([y, z], dim=1)
+        return self.act(self.bn(out))
+
+
+# ===== Depthwise Bottleneck =====
+class DWBottleneck(nn.Module):
+    def __init__(self, c):
+        super().__init__()
+        self.dw = nn.Conv2d(c, c, 3, 1, 1, groups=c, bias=False)
+        self.pw = nn.Conv2d(c, c, 1, 1, 0, bias=False)
+        self.bn = nn.BatchNorm2d(c)
+        self.act = nn.SiLU()
+
+    def forward(self, x):
+        return x + self.act(self.bn(self.pw(self.dw(x))))
+
+
+# ===== C2f Light =====
+class DualSKP(nn.Module):
+    def __init__(self, c1, c2, n=1, e=0.5):
+        super().__init__()
+        c_ = int(c2 * e)  # giảm hidden channels
+
+        self.cv1 = GhostConv(c1, 2 * c_)
+        self.cv2 = GhostConv((2 + n) * c_, c2)
+
+        self.m = nn.ModuleList(DWBottleneck(c_) for _ in range(n))
+
+    def forward(self, x):
+        y = list(self.cv1(x).chunk(2, 1))  # split
+        for m in self.m:
+            y.append(m(y[-1]))
         return self.cv2(torch.cat(y, 1))
