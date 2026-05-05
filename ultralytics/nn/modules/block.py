@@ -2073,61 +2073,28 @@ class RealNVP(nn.Module):
         z, log_det = self.backward_p(x)
         return self.prior.log_prob(z) + log_det
     
-
-import math
-import torch
-import torch.nn as nn
-
-try:
-    from ultralytics.nn.modules.conv import Conv
-except Exception:
-    pass
-
-
-class GhostConvLite(nn.Module):
-    """Ghost convolution block for reducing computation."""
-
-    def __init__(self, c1, c2, k=1, s=1, ratio=2, act=True):
-        super().__init__()
-        self.c2 = c2
-        c_ = math.ceil(c2 / ratio)
-        self.primary_conv = Conv(c1, c_, k, s, act=act)
-        self.cheap_operation = Conv(c_, c_, 3, 1, g=c_, act=act)
-
-    def forward(self, x):
-        y = self.primary_conv(x)
-        y = torch.cat((y, self.cheap_operation(y)), dim=1)
-        return y[:, :self.c2, :, :]
-
-
-class GhostBottleneckLite(nn.Module):
-    """Lightweight bottleneck using GhostConvLite."""
-
-    def __init__(self, c1, c2, shortcut=True):
-        super().__init__()
-        self.cv1 = GhostConvLite(c1, c2, 1, 1)
-        self.cv2 = GhostConvLite(c2, c2, 3, 1)
-        self.add = shortcut and c1 == c2
-
-    def forward(self, x):
-        y = self.cv2(self.cv1(x))
-        return x + y if self.add else y
-
-
 class DualSKP(nn.Module):
-    """C2f block using Ghost bottlenecks."""
-
-    def __init__(self, c1, c2, n=1, shortcut=False, e=0.5):
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):
         super().__init__()
-        self.c = int(c2 * e)
+        # Giảm channel trung gian để giảm FLOPs (e=0.5 là mặc định, có thể giảm xuống 0.25 nếu cần cực nhẹ)
+        self.c = int(c2 * e) 
         self.cv1 = Conv(c1, 2 * self.c, 1, 1)
         self.cv2 = Conv((2 + n) * self.c, c2, 1)
+        
+        # Sử dụng groups=self.c để biến Conv 3x3 thành Depthwise Conv giúp giảm FLOPs cực mạnh
+        # Chúng ta chỉ dùng 1 Conv 3x3 thay vì 2 trong mỗi bottleneck để tập trung vào tốc độ
         self.m = nn.ModuleList(
-            GhostBottleneckLite(self.c, self.c, shortcut) for _ in range(n)
+            nn.Sequential(
+                Conv(self.c, self.c, 3, g=self.c), # Depthwise
+                Conv(self.c, self.c, 1)            # Pointwise (để mix channel)
+            ) if shortcut else 
+            nn.Sequential(
+                Conv(self.c, self.c, 3, g=self.c)
+            ) for _ in range(n)
         )
 
     def forward(self, x):
+        # Giữ nguyên cơ chế split/concatenate đặc trưng của C2f
         y = list(self.cv1(x).chunk(2, 1))
-        for m in self.m:
-            y.append(m(y[-1]))
-        return self.cv2(torch.cat(y, 1))   
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1))
