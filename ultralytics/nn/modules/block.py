@@ -2073,54 +2073,52 @@ class RealNVP(nn.Module):
         z, log_det = self.backward_p(x)
         return self.prior.log_prob(z) + log_det
     
-
+ 
 import torch
 import torch.nn as nn
 import math
 
-# ===== Ghost Conv (lightweight) =====
-class GhostConv(nn.Module):
-    def __init__(self, c1, c2, k=1, s=1, ratio=2):
+# ===== Fast Conv (ít overhead hơn Ghost) =====
+class FastConv(nn.Module):
+    def __init__(self, c1, c2, k=1, s=1):
         super().__init__()
-        c_ = math.ceil(c2 / ratio)
-        self.primary = nn.Conv2d(c1, c_, k, s, k // 2, bias=False)
-        self.cheap = nn.Conv2d(c_, c2 - c_, 3, 1, 1, groups=c_, bias=False)
+        self.conv = nn.Conv2d(c1, c2, k, s, k // 2, bias=False)
         self.bn = nn.BatchNorm2d(c2)
         self.act = nn.SiLU()
 
     def forward(self, x):
-        y = self.primary(x)
-        z = self.cheap(y)
-        out = torch.cat([y, z], dim=1)
-        return self.act(self.bn(out))
+        return self.act(self.bn(self.conv(x)))
 
 
-# ===== Depthwise Bottleneck =====
-class DWBottleneck(nn.Module):
+# ===== Lite Bottleneck (không depthwise) =====
+class LiteBottleneck(nn.Module):
     def __init__(self, c):
         super().__init__()
-        self.dw = nn.Conv2d(c, c, 3, 1, 1, groups=c, bias=False)
-        self.pw = nn.Conv2d(c, c, 1, 1, 0, bias=False)
-        self.bn = nn.BatchNorm2d(c)
-        self.act = nn.SiLU()
+        self.cv1 = FastConv(c, c, 1)
+        self.cv2 = FastConv(c, c, 3)
 
     def forward(self, x):
-        return x + self.act(self.bn(self.pw(self.dw(x))))
+        return x + self.cv2(self.cv1(x))
 
 
-# ===== C2f Light =====
+# ===== C2f Fast =====
 class DualSKP(nn.Module):
     def __init__(self, c1, c2, n=1, e=0.5):
         super().__init__()
-        c_ = int(c2 * e)  # giảm hidden channels
+        c_ = int(c2 * e)
 
-        self.cv1 = GhostConv(c1, 2 * c_)
-        self.cv2 = GhostConv((2 + n) * c_, c2)
+        self.cv1 = FastConv(c1, 2 * c_)
+        self.cv2 = FastConv(3 * c_, c2)  # chỉ giữ 3 nhánh
 
-        self.m = nn.ModuleList(DWBottleneck(c_) for _ in range(n))
+        self.m = nn.ModuleList(LiteBottleneck(c_) for _ in range(n))
 
     def forward(self, x):
-        y = list(self.cv1(x).chunk(2, 1))  # split
+        y1, y2 = self.cv1(x).chunk(2, 1)
+
         for m in self.m:
-            y.append(m(y[-1]))
-        return self.cv2(torch.cat(y, 1))
+            y2 = m(y2)
+
+        # chỉ giữ 3 feature → giảm memory + tăng FPS
+        out = torch.cat((y1, y2, y2), 1)
+
+        return self.cv2(out)
