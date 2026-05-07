@@ -2074,51 +2074,52 @@ class RealNVP(nn.Module):
         return self.prior.log_prob(z) + log_det
     
  
+
+ 
+    
 import torch
 import torch.nn as nn
-import math
 
-# ===== Fast Conv (ít overhead hơn Ghost) =====
-class FastConv(nn.Module):
+# ===== Conv tối giản (fuse-friendly) =====
+class ConvBNAct(nn.Module):
     def __init__(self, c1, c2, k=1, s=1):
         super().__init__()
         self.conv = nn.Conv2d(c1, c2, k, s, k // 2, bias=False)
         self.bn = nn.BatchNorm2d(c2)
-        self.act = nn.SiLU()
+        self.act = nn.ReLU(inplace=True)  # ReLU nhanh hơn SiLU
 
     def forward(self, x):
         return self.act(self.bn(self.conv(x)))
 
 
-# ===== Lite Bottleneck (không depthwise) =====
-class LiteBottleneck(nn.Module):
+# ===== Bottleneck cực nhẹ (1 conv duy nhất) =====
+class UltraBottleneck(nn.Module):
     def __init__(self, c):
         super().__init__()
-        self.cv1 = FastConv(c, c, 1)
-        self.cv2 = FastConv(c, c, 3)
+        self.conv = ConvBNAct(c, c, 3)
 
     def forward(self, x):
-        return x + self.cv2(self.cv1(x))
+        return x + self.conv(x)
 
 
-# ===== C2f Fast =====
+# ===== C2f UltraFast =====
 class DualSKP(nn.Module):
     def __init__(self, c1, c2, n=1, e=0.5):
         super().__init__()
         c_ = int(c2 * e)
 
-        self.cv1 = FastConv(c1, 2 * c_)
-        self.cv2 = FastConv(3 * c_, c2)  # chỉ giữ 3 nhánh
+        self.cv1 = ConvBNAct(c1, 2 * c_)
+        self.cv2 = ConvBNAct(2 * c_, c2)  # ❗ bỏ concat lớn
 
-        self.m = nn.ModuleList(LiteBottleneck(c_) for _ in range(n))
+        self.m = UltraBottleneck(c_)
 
     def forward(self, x):
         y1, y2 = self.cv1(x).chunk(2, 1)
 
-        for m in self.m:
-            y2 = m(y2)
+        # chỉ chạy 1 bottleneck (không loop)
+        y2 = self.m(y2)
 
-        # chỉ giữ 3 feature → giảm memory + tăng FPS
-        out = torch.cat((y1, y2, y2), 1)
+        # ❗ KHÔNG concat nhiều branch → giảm memory + latency
+        out = torch.cat((y1, y2), 1)
 
         return self.cv2(out)
