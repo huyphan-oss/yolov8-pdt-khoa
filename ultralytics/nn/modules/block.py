@@ -2079,47 +2079,32 @@ class RealNVP(nn.Module):
     
 import torch
 import torch.nn as nn
+from ultralytics.nn.modules.conv import Conv, RepConv
 
-# ===== Conv tối giản (fuse-friendly) =====
-class ConvBNAct(nn.Module):
-    def __init__(self, c1, c2, k=1, s=1):
-        super().__init__()
-        self.conv = nn.Conv2d(c1, c2, k, s, k // 2, bias=False)
-        self.bn = nn.BatchNorm2d(c2)
-        self.act = nn.ReLU(inplace=True)  # ReLU nhanh hơn SiLU
-
-    def forward(self, x):
-        return self.act(self.bn(self.conv(x)))
-
-
-# ===== Bottleneck cực nhẹ (1 conv duy nhất) =====
-class UltraBottleneck(nn.Module):
+# ===== Rep Bottleneck =====
+class RepBottleneck(nn.Module):
     def __init__(self, c):
         super().__init__()
-        self.conv = ConvBNAct(c, c, 3)
+        self.cv1 = RepConv(c, c, k=3, s=1)   # multi-branch khi train
+        self.cv2 = Conv(c, c, k=1, s=1)
 
     def forward(self, x):
-        return x + self.conv(x)
+        return x + self.cv2(self.cv1(x))
 
 
-# ===== C2f UltraFast =====
+# ===== C2f Rep =====
 class DualSKP(nn.Module):
     def __init__(self, c1, c2, n=1, e=0.5):
         super().__init__()
         c_ = int(c2 * e)
 
-        self.cv1 = ConvBNAct(c1, 2 * c_)
-        self.cv2 = ConvBNAct(2 * c_, c2)  # ❗ bỏ concat lớn
+        self.cv1 = Conv(c1, 2 * c_, 1, 1)
+        self.cv2 = Conv((2 + n) * c_, c2, 1, 1)
 
-        self.m = UltraBottleneck(c_)
+        self.m = nn.ModuleList(RepBottleneck(c_) for _ in range(n))
 
     def forward(self, x):
-        y1, y2 = self.cv1(x).chunk(2, 1)
-
-        # chỉ chạy 1 bottleneck (không loop)
-        y2 = self.m(y2)
-
-        # ❗ KHÔNG concat nhiều branch → giảm memory + latency
-        out = torch.cat((y1, y2), 1)
-
-        return self.cv2(out)
+        y = list(self.cv1(x).chunk(2, 1))
+        for m in self.m:
+            y.append(m(y[-1]))
+        return self.cv2(torch.cat(y, 1))
