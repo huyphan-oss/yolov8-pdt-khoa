@@ -2116,7 +2116,7 @@ class DualSKP(nn.Module):
         self.cv2 = Conv((2 + n) * self.c, c2, 1, 1)
         
         # Single shared activation for efficiency
-        self.act = nn.SiLU(inplace=True)
+        self.act = nn.SiLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Optimized forward pass using split() and inplace operations."""
