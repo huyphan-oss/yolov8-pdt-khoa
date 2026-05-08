@@ -2077,34 +2077,41 @@ class RealNVP(nn.Module):
 
  
     
+
 import torch
 import torch.nn as nn
-from ultralytics.nn.modules.conv import Conv, RepConv
+from ultralytics.nn.modules.conv import Conv
 
-# ===== Rep Bottleneck =====
-class RepBottleneck(nn.Module):
+# ===== Turbo Bottleneck (siêu gọn) =====
+class TurboBottleneck(nn.Module):
     def __init__(self, c):
         super().__init__()
-        self.cv1 = RepConv(c, c, k=3, s=1)   # multi-branch khi train
-        self.cv2 = Conv(c, c, k=1, s=1)
+        self.cv1 = Conv(c, c, 3, 1)
+        self.cv2 = Conv(c, c, 1, 1)
 
     def forward(self, x):
         return x + self.cv2(self.cv1(x))
 
 
-# ===== C2f Rep =====
+# ===== C2f Turbo (FPS optimized) =====
 class DualSKP(nn.Module):
     def __init__(self, c1, c2, n=1, e=0.5):
         super().__init__()
         c_ = int(c2 * e)
 
+        # giảm channel trung gian
         self.cv1 = Conv(c1, 2 * c_, 1, 1)
-        self.cv2 = Conv((2 + n) * c_, c2, 1, 1)
 
-        self.m = nn.ModuleList(RepBottleneck(c_) for _ in range(n))
+        # ❗ chỉ concat 2 nhánh (thay vì 2+n)
+        self.cv2 = Conv(2 * c_, c2, 1, 1)
+
+        # ❗ chỉ 1 bottleneck (bỏ loop)
+        self.m = TurboBottleneck(c_)
 
     def forward(self, x):
-        y = list(self.cv1(x).chunk(2, 1))
-        for m in self.m:
-            y.append(m(y[-1]))
-        return self.cv2(torch.cat(y, 1))
+        y1, y2 = self.cv1(x).chunk(2, 1)
+
+        y2 = self.m(y2)
+
+        # concat tối thiểu
+        return self.cv2(torch.cat((y1, y2), 1))
