@@ -2077,67 +2077,28 @@ class RealNVP(nn.Module):
 
 # ===== FPS Optimized Variants =====
 class DualSKP(nn.Module):
-    """Optimized C2f for maximum FPS performance.
-    
-    Improvements over standard C2f:
-    - Uses lightweight depthwise separable convolutions
-    - Reduced computational complexity
-    - Minimal activation functions
-    - Optimized memory access patterns
-    - ~40-50% faster inference than standard C2f
-    """
-
-    def __init__(self, c1: int, c2: int, n: int = 1, shortcut: bool = False, g: int = 1, e: float = 0.5):
-        """Initialize FPS-optimized C2f.
-
-        Args:
-            c1 (int): Input channels.
-            c2 (int): Output channels.
-            n (int): Number of Bottleneck blocks.
-            shortcut (bool): Whether to use shortcut connections.
-            g (int): Groups for convolutions (not used, always optimized).
-            e (float): Expansion ratio (reduced from 0.5 to 0.25 by default recommended).
-        """
+    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):
         super().__init__()
-        self.c = int(c2 * e)  # hidden channels
-        self.n = n
+        self.c = int(c2 * e)
+        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
+        self.cv2 = Conv((2 + n) * self.c, c2, 1)
+        self.m = nn.ModuleList(Bottleneck(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
+
+    def forward(self, x):
+        # cv1 output: (batch, 2*c, h, w)
+        x = self.cv1(x)
         
-        # Initial projection: 1x1 conv (no activation for speed)
-        self.cv1 = Conv(c1, 2 * self.c, 1, 1, act=False)
+        # Sử dụng split thay vì chunk để ổn định hơn khi export
+        y1, y2 = x.split((self.c, self.c), 1)
         
-        # Ultra-light bottlenecks with depthwise-separable convolution
-        # Only 3x3 depthwise + skip connection (no second projection)
-        self.m = nn.ModuleList(
-            Conv(self.c, self.c, 3, 1, g=self.c, act=False)  # Depthwise only
-            for _ in range(n)
-        )
+        # Khởi tạo output list với y1, y2 để giảm số lần append/extend
+        out = [y1, y2]
         
-        # Final projection: 1x1 conv with activation
-        self.cv2 = Conv((2 + n) * self.c, c2, 1, 1)
-        
-        # Single shared activation for efficiency
-        self.act = nn.SiLU()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        y = self.cv1(x)
-        y1, y2 = y.split(self.c, 1)
-
-        # FIX 1: clone trước khi activation
-        y1 = self.act(y1.clone())
-
-        y_list = [y1, y2]
-
-        for block in self.m:
-            # depthwise conv
-            y2 = block(y2)
-
-            # FIX 2: KHÔNG dùng inplace
-            y2 = y2 + y_list[-1]
-
-            y_list.append(y2)
-
-        return self.cv2(torch.cat(y_list, 1))
-
-
-
-
+        # Thực hiện các khối Bottleneck
+        # Tối ưu: Chỉ giữ kết quả cuối cùng của mỗi block
+        for module in self.m:
+            y2 = module(y2)
+            out.append(y2)
+            
+        # Ghép tất cả trong một lần duy nhất
+        return self.cv2(torch.cat(out, 1))
