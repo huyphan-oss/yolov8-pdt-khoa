@@ -2119,23 +2119,23 @@ class DualSKP(nn.Module):
         self.act = nn.SiLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Optimized forward pass using split() and inplace operations."""
-        # Initial split with no activation
         y = self.cv1(x)
         y1, y2 = y.split(self.c, 1)
-        
-        # Apply activation once and reuse
-        y1 = self.act(y1)
-        
-        # Accumulate features with residual connections
+
+        # FIX 1: clone trước khi activation
+        y1 = self.act(y1.clone())
+
         y_list = [y1, y2]
+
         for block in self.m:
-            # Depthwise convolution with residual
+            # depthwise conv
             y2 = block(y2)
-            y2.add_(y_list[-1])  # In-place residual connection
+
+            # FIX 2: KHÔNG dùng inplace
+            y2 = y2 + y_list[-1]
+
             y_list.append(y2)
-        
-        # Efficient concatenation and final projection
+
         return self.cv2(torch.cat(y_list, 1))
 
 
