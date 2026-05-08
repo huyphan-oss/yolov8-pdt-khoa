@@ -2077,28 +2077,23 @@ class RealNVP(nn.Module):
 
 # ===== FPS Optimized Variants =====
 class DualSKP(nn.Module):
-    def __init__(self, c1, c2, n=1, shortcut=False, g=1, e=0.5):
+    def __init__(self, c1: int, c2: int, n: int = 1, shortcut: bool = False, g: int = 1, e: float = 0.5):
         super().__init__()
-        self.c = int(c2 * e)
+        self.c = int(c2 * e)  # hidden channels
         self.cv1 = Conv(c1, 2 * self.c, 1, 1)
         self.cv2 = Conv((2 + n) * self.c, c2, 1)
         self.m = nn.ModuleList(Bottleneck(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
 
-    def forward(self, x):
-        # cv1 output: (batch, 2*c, h, w)
-        x = self.cv1(x)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # 1. Sử dụng chunk trực tiếp thay vì list(split) để tránh copy dữ liệu dư thừa
+        y = list(self.cv1(x).chunk(2, 1))
         
-        # Sử dụng split thay vì chunk để ổn định hơn khi export
-        y1, y2 = x.split((self.c, self.c), 1)
-        
-        # Khởi tạo output list với y1, y2 để giảm số lần append/extend
-        out = [y1, y2]
-        
-        # Thực hiện các khối Bottleneck
-        # Tối ưu: Chỉ giữ kết quả cuối cùng của mỗi block
-        for module in self.m:
-            y2 = module(y2)
-            out.append(y2)
+        # 2. Thay vì dùng y.extend(m(y[-1]) cho m in self.m) trong một list comprehension ẩn,
+        # Ta dùng vòng lặp tường minh. Điều này giúp các công cụ tối ưu (TensorRT/TorchScript) 
+        # dễ dàng thực hiện "Layer Fusion".
+        for m in self.m:
+            y.append(m(y[-1]))
             
-        # Ghép tất cả trong một lần duy nhất
-        return self.cv2(torch.cat(out, 1))
+        # 3. Phép cat cuối cùng được thực hiện một lần. 
+        # Lưu ý: Cấu trúc toán học vẫn y hệt bản gốc (giữ nguyên n + 2 channels).
+        return self.cv2(torch.cat(y, 1))
