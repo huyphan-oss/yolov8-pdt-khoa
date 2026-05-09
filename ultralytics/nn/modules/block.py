@@ -2072,69 +2072,76 @@ class RealNVP(nn.Module):
             self.float()
         z, log_det = self.backward_p(x)
         return self.prior.log_prob(z) + log_det
-    
-class DualSKP(nn.Module):
-    """Ultra-optimized C2f for maximum FPS - 50-70% faster than standard C2f.
-    
-    Aggressive optimizations:
-    - Only depthwise separable convolutions (group convolutions)
-    - No Bottleneck blocks - lightweight Conv blocks with skip connections
-    - Minimal activation functions (only 2 total)
-    - Inplace operations throughout
-    - Optimized memory access patterns
-    - Reduced computational complexity: O(n*k²*c) vs O(n*k²*c²)
-    """
 
-    def __init__(self, c1: int, c2: int, n: int = 1, shortcut: bool = False, g: int = 1, e: float = 0.5):
-        """Initialize ultra-optimized FPS C2f.
+class BottleneckMod(nn.Module):
+    """Standard bottleneck with Depthwise Convolution."""
+
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        shortcut: bool = True,
+        g: int = 1,
+        k: tuple[int, int] = (3, 3),
+        e: float = 0.5,
+    ):
+        """Initialize depthwise bottleneck module.
 
         Args:
             c1 (int): Input channels.
             c2 (int): Output channels.
-            n (int): Number of blocks.
-            shortcut (bool): Unused (kept for compatibility).
+            shortcut (bool): Whether to use shortcut connection.
             g (int): Unused (kept for compatibility).
-            e (float): Expansion ratio (recommend 0.25-0.5 for FPS).
+            k (tuple): Kernel sizes for convolutions.
+            e (float): Expansion ratio.
         """
         super().__init__()
-        self.c = int(c2 * e)
-        self.n = n
-        
-        # Initial projection with no activation (faster)
-        self.cv1 = Conv(c1, 2 * self.c, 1, 1, act=False)
-        
-        # Ultra-light blocks: only depthwise convolutions (no expensive standard convs)
-        # Depthwise conv is ~9x faster: O(k²c) vs O(k²c²)
-        self.m = nn.ModuleList(
-            Conv(self.c, self.c, 3, 1, g=self.c, act=False)  # Depthwise only, no activation
-            for _ in range(n)
-        )
-        
-        # Output projection
-        self.cv2 = Conv((2 + n) * self.c, c2, 1, 1)
-        
-        # Shared activation for efficiency
-        self.act = nn.SiLU(inplace=True)
+
+        c_ = int(c2 * e)  # hidden channels
+
+        # 1x1 pointwise convolution
+        self.cv1 = Conv(c1, c_, 1, 1)
+
+        # 3x3 depthwise convolution
+        self.cv2 = Conv(c_, c2, 3, 1, g=c_)
+
+        self.add = shortcut and c1 == c2
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Optimized forward with split and inplace operations."""
-        # Initial split (split is faster than chunk for memory access)
-        y = self.cv1(x)
-        y1, y2 = y.split(self.c, 1)
-        
-        # Apply activation to first split (only once)
-        y1 = self.act(y1)
-        
-        # Accumulate features with direct residual connections
-        outs = [y1, y2]
-        for block in self.m:
-            # Depthwise convolution
-            y2_new = block(y2)
-            # In-place residual connection (saves memory)
-            y2_new.add_(y2)
-            outs.append(y2_new)
-            y2 = y2_new
-        
-        # Fused concatenation and projection
-        return self.cv2(torch.cat(outs, 1))
+        """Apply bottleneck with optional shortcut connection."""
+        y = self.cv2(self.cv1(x))
+        return x + y if self.add else y
+    
+class DualSKP(nn.Module):
+    """Faster Implementation of CSP Bottleneck with 2 convolutions."""
+
+    def __init__(self, c1: int, c2: int, n: int = 1, shortcut: bool = False, g: int = 1, e: float = 0.5):
+        """Initialize a CSP bottleneck with 2 convolutions.
+
+        Args:
+            c1 (int): Input channels.
+            c2 (int): Output channels.
+            n (int): Number of Bottleneck blocks.
+            shortcut (bool): Whether to use shortcut connections.
+            g (int): Groups for convolutions.
+            e (float): Expansion ratio.
+        """
+        super().__init__()
+        self.c = int(c2 * e)  # hidden channels
+        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
+        self.cv2 = Conv((2 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
+        self.m = nn.ModuleList( BottleneckMod(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through C2f layer."""
+        y = list(self.cv1(x).chunk(2, 1))
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1))
+
+    def forward_split(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass using split() instead of chunk()."""
+        y = self.cv1(x).split((self.c, self.c), 1)
+        y = [y[0], y[1]]
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1))
 
