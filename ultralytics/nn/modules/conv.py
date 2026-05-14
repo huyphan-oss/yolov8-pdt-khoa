@@ -25,7 +25,7 @@ __all__ = (
     "RepConv",
     "SpatialAttention",
     "DSC_LR_Conv",
-    "LRPointwise"
+    "LRPointwise",
 )
 
 

@@ -193,5 +193,4 @@ __all__ = (
     "v10Detect",
     "DualSKP",
     "DSC_LR_Conv",
-    "LRPointwise",
 )
