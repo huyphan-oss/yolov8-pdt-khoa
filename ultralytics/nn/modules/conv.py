@@ -693,6 +693,7 @@ class LRPointwise(nn.Module):
         return y
 
 
+```python id="4yrd5s"
 class DSC_LR_Conv(nn.Module):
 
     def __init__(
@@ -701,41 +702,41 @@ class DSC_LR_Conv(nn.Module):
         c2,
         k=3,
         s=1,
-        rank=32,
+        rank=16,
         act=True
     ):
         super().__init__()
 
-        # REAL depthwise conv
-        self.dw = nn.Conv2d(
-            in_channels=c1,
-            out_channels=c1,
-            kernel_size=k,
-            stride=s,
-            padding=k // 2,
-            groups=c1,
-            bias=False
+        self.dw = nn.Sequential(
+            nn.Conv2d(
+                c1,
+                c1,
+                kernel_size=k,
+                stride=s,
+                padding=k // 2,
+                groups=c1,
+                bias=False
+            ),
+            nn.BatchNorm2d(c1),
+            nn.SiLU()
         )
 
-        self.bn = nn.BatchNorm2d(c1)
+        self.reduce = Conv(c1, rank, 1, 1)
+        self.expand = Conv(rank, c2, 1, 1)
 
-        self.act = nn.SiLU()
-
-        # low-rank pointwise
-        self.pw = LRPointwise(
-            c1=c1,
-            c2=c2,
-            rank=rank,
-            shortcut=(s == 1 and c1 == c2)
-        )
+        self.add = (s == 1 and c1 == c2)
 
     def forward(self, x):
 
-        x = self.act(self.bn(self.dw(x)))
+        y = self.dw(x)
 
-        x = self.pw(x)
+        y = self.expand(self.reduce(y))
 
-        return x
+        if self.add:
+            y = y + x
+
+        return y
+
 
 
 

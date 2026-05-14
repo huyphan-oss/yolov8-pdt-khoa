@@ -1611,6 +1611,7 @@ def parse_model(d, ch, verbose=True):
             C2fCIB,
             A2C2f,
             DualSKP,
+            DSC_LR_Conv,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
