@@ -60,7 +60,7 @@ from .block import (
     SCDown,
     TorchVision,
     DualSKP,
-    LRPointwise,
+
 )
 from .conv import (
     CBAM,
