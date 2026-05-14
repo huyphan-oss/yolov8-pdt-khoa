@@ -697,14 +697,16 @@ class DSC_LR_Conv(nn.Module):
     """
     Depthwise Separable Conv + Low-Rank Pointwise
     """
+    def __init__(
+        self,
+        c1,
+        c2,
+        k=3,
+        s=1,
+        rank=32,
+        act=True
+    ):
 
-    def __init__(self,
-                 c1,
-                 c2,
-                 k=3,
-                 s=1,
-                 rank=32,
-                 act=True):
 
         super().__init__()
 
