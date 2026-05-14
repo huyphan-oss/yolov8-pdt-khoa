@@ -24,6 +24,8 @@ __all__ = (
     "LightConv",
     "RepConv",
     "SpatialAttention",
+    "DSC_LR_Conv",
+    "LRPointwise"
 )
 
 
@@ -667,3 +669,58 @@ class Index(nn.Module):
             (torch.Tensor): Selected tensor.
         """
         return x[self.index]
+
+class LRPointwise(nn.Module):
+    """
+    Low-Rank Pointwise Convolution
+    1x1: Cin -> r -> Cout
+    """
+
+    def __init__(self, c1, c2, rank=32, shortcut=True, act=True):
+        super().__init__()
+
+        self.shortcut = shortcut and (c1 == c2)
+
+        self.reduce = Conv(c1, rank, k=1, act=act)
+        self.expand = Conv(rank, c2, k=1, act=act)
+
+    def forward(self, x):
+        y = self.expand(self.reduce(x))
+
+        if self.shortcut:
+            y = y + x
+
+        return y
+
+
+class DSC_LR_Conv(nn.Module):
+    """
+    Depthwise Separable Conv + Low-Rank Pointwise
+    """
+
+    def __init__(self,
+                 c1,
+                 c2,
+                 k=3,
+                 s=1,
+                 rank=32,
+                 act=True):
+
+        super().__init__()
+
+        # Depthwise 3x3
+        self.dw = DWConv(c1, c1, k=k, s=s, act=act)
+
+        # Low-rank pointwise
+        self.pw = LRPointwise(
+            c1=c1,
+            c2=c2,
+            rank=rank,
+            shortcut=(s == 1)
+        )
+
+    def forward(self, x):
+        x = self.dw(x)
+        x = self.pw(x)
+        return x
+

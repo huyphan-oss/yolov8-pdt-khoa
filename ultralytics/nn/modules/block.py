@@ -469,7 +469,7 @@ class Bottleneck(nn.Module):
             shortcut (bool): Whether to use shortcut connection.
             g (int): Groups for convolutions.
             k (tuple): Kernel sizes for convolutions.
-            e (float): Expansion ratio.
+        e (float): Expansion ratio. 
         """
         super().__init__()
         c_ = int(c2 * e)  # hidden channels
