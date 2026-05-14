@@ -189,4 +189,6 @@ __all__ = (
     "YOLOESegment26",
     "v10Detect",
     "DualSKP",
+    "DSC_LR_Conv",
+    "LRPointwise"
 )
