@@ -60,6 +60,7 @@ from .block import (
     SCDown,
     TorchVision,
     DualSKP,
+    LRPointwise,
 )
 from .conv import (
     CBAM,
@@ -76,6 +77,8 @@ from .conv import (
     LightConv,
     RepConv,
     SpatialAttention,
+    DSC_LR_Conv,
+    
 )
 from .head import (
     OBB,
@@ -190,5 +193,5 @@ __all__ = (
     "v10Detect",
     "DualSKP",
     "DSC_LR_Conv",
-    "LRPointwise"
+    "LRPointwise",
 )

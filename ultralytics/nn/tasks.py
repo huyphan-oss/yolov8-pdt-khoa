@@ -73,6 +73,8 @@ from ultralytics.nn.modules import (
     YOLOESegment26,
     v10Detect,
     DualSKP,
+    DSC_LR_Conv,
+    LRPointwise
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, WINDOWS, YAML, colorstr, emojis
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
