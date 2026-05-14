@@ -693,10 +693,12 @@ class LRPointwise(nn.Module):
         return y
 
 
+
 class DSC_LR_Conv(nn.Module):
     """
     Depthwise Separable Conv + Low-Rank Pointwise
     """
+
     def __init__(
         self,
         c1,
@@ -707,22 +709,29 @@ class DSC_LR_Conv(nn.Module):
         act=True
     ):
 
-
         super().__init__()
 
-        # Depthwise 3x3
-        self.dw = DWConv(c1, c1, k=k, s=s, act=act)
+        # Pure depthwise conv
+        self.dw = Conv(
+            c1,
+            c1,
+            k=k,
+            s=s,
+            g=c1,
+            act=act
+        )
 
         # Low-rank pointwise
         self.pw = LRPointwise(
             c1=c1,
             c2=c2,
             rank=rank,
-            shortcut=(s == 1)
+            shortcut=(s == 1 and c1 == c2)
         )
 
     def forward(self, x):
         x = self.dw(x)
         x = self.pw(x)
         return x
+
 
