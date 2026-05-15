@@ -670,30 +670,6 @@ class Index(nn.Module):
         """
         return x[self.index]
 
-class LRPointwise(nn.Module):
-    """
-    Low-Rank Pointwise Convolution
-    1x1: Cin -> r -> Cout
-    """
-
-    def __init__(self, c1, c2, rank=32, shortcut=True, act=True):
-        super().__init__()
-
-        self.shortcut = shortcut and (c1 == c2)
-
-        self.reduce = Conv(c1, rank, k=1, act=act)
-        self.expand = Conv(rank, c2, k=1, act=act)
-
-    def forward(self, x):
-        y = self.expand(self.reduce(x))
-
-        if self.shortcut:
-            y = y + x
-
-        return y
-
-
-
 class DSC_LR_Conv(nn.Module):
 
     def __init__(
