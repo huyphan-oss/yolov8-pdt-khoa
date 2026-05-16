@@ -1616,6 +1616,10 @@ def parse_model(d, ch, verbose=True):
             A2C2f,
             DSC_LR_Conv,
             C2f_LR,
+            TuckerBottleneck,
+            LRTuckerC2f,
+            RConv1x1,
+            TuckerConv3x3,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
