@@ -59,8 +59,9 @@ from .block import (
     ResNetLayer,
     SCDown,
     TorchVision,
-    DualSKP,
     C2f_LR,
+    TuckerBottleneck,
+    LRTuckerC2f,
 
 )
 from .conv import (
@@ -79,7 +80,8 @@ from .conv import (
     RepConv,
     SpatialAttention,
     DSC_LR_Conv,
-    
+    LRConv1x1,
+    TuckerConv3x3,
 )
 from .head import (
     OBB,
@@ -192,7 +194,10 @@ __all__ = (
     "YOLOESegment",
     "YOLOESegment26",
     "v10Detect",
-    "DualSKP",
     "DSC_LR_Conv",
     "C2f_LR",
+    "LRConv1x1",
+    "TuckerConv3x3",
+    "TuckerBottleneck",
+    "LRTuckerC2f",
 )

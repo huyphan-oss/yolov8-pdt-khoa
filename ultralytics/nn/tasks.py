@@ -72,7 +72,6 @@ from ultralytics.nn.modules import (
     YOLOESegment,
     YOLOESegment26,
     v10Detect,
-    DualSKP,
     DSC_LR_Conv,
     C2f_LR,
 )
@@ -1611,7 +1610,6 @@ def parse_model(d, ch, verbose=True):
             SCDown,
             C2fCIB,
             A2C2f,
-            DualSKP,
             DSC_LR_Conv,
             C2f_LR,
         }

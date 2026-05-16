@@ -9,7 +9,7 @@ import torch.nn.functional as F
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
-from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad
+from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, LRConv1x1, TuckerConv3x3, autopad
 from .transformer import TransformerBlock
 
 __all__ = (
@@ -52,8 +52,9 @@ __all__ = (
     "ResNetLayer",
     "SCDown",
     "TorchVision",
-    "DualSKP",
     "C2f_LR",
+    "TuckerBottleneck",
+    "LRTuckerC2f",
 )
 
 
@@ -2113,39 +2114,7 @@ class BottleneckMod(nn.Module):
         y = self.cv2(self.cv1(x))
         return x + y if self.add else y
     
-class DualSKP(nn.Module):
-    """Faster Implementation of CSP Bottleneck with 2 convolutions."""
 
-    def __init__(self, c1: int, c2: int, n: int = 1, shortcut: bool = False, g: int = 1, e: float = 0.5):
-        """Initialize a CSP bottleneck with 2 convolutions.
-
-        Args:
-            c1 (int): Input channels.
-            c2 (int): Output channels.
-            n (int): Number of Bottleneck blocks.
-            shortcut (bool): Whether to use shortcut connections.
-            g (int): Groups for convolutions.
-            e (float): Expansion ratio.
-        """
-        super().__init__()
-        self.c = int(c2 * e)  # hidden channels
-        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
-        self.cv2 = Conv((2 + n) * self.c, c2, 1)  # optional act=FReLU(c2)
-        self.m = nn.ModuleList( BottleneckMod(self.c, self.c, shortcut, g, k=((3, 3), (3, 3)), e=1.0) for _ in range(n))
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass through C2f layer."""
-        y = list(self.cv1(x).chunk(2, 1))
-        y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
-
-    def forward_split(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass using split() instead of chunk()."""
-        y = self.cv1(x).split((self.c, self.c), 1)
-        y = [y[0], y[1]]
-        y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
-    
 
 class Bottleneck_LR(nn.Module):
     """
@@ -2309,6 +2278,144 @@ class C2f_LR(nn.Module):
             self.cv2_reduce(y)
         )
 
+class TuckerBottleneck(nn.Module):
+    """
+    Bottleneck with Low-rank 1x1 projection and Tucker-style 3x3 convolution.
+
+    Compared with the standard YOLOv8 Bottleneck:
+        Conv 1x1 / 3x3 -> Conv 3x3
+
+    This module uses:
+        LRConv1x1: c1 -> hidden
+        TuckerConv3x3: hidden -> c2
+
+    Args:
+        c1: input channels
+        c2: output channels
+        shortcut: whether to use residual connection
+        e: expansion ratio
+        rank_ratio: compression ratio for low-rank and Tucker rank
+        act: activation
+    """
+
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        shortcut: bool = True,
+        e: float = 0.5,
+        rank_ratio: float = 0.5,
+        act: bool = True,
+    ):
+        super().__init__()
+
+        c_ = int(c2 * e)
+
+        # Low-rank 1x1 projection
+        self.cv1 = LRConv1x1(
+            c1,
+            c_,
+            rank_ratio=rank_ratio,
+            act=act,
+        )
+
+        # Tucker-style 3x3 convolution
+        self.cv2 = TuckerConv3x3(
+            c_,
+            c2,
+            rank_ratio=rank_ratio,
+            act=act,
+        )
+
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        y = self.cv2(self.cv1(x))
+        return x + y if self.add else y
+
+
+class LRTuckerC2f(nn.Module):
+    """
+    LRTucker-C2f module for YOLOv8n.
+
+    Improvements over standard C2f:
+        1. cv1: Standard 1x1 Conv -> Low-rank 1x1 Conv
+        2. Bottleneck: Standard 3x3 Conv -> Tucker-style 3x3 Conv
+        3. cv2: Standard 1x1 Conv -> Low-rank 1x1 Conv
+
+    Structure:
+        Input
+        -> Low-rank cv1
+        -> split
+        -> TuckerBottleneck x n
+        -> concat
+        -> Low-rank cv2
+        -> Output
+
+    Args:
+        c1: input channels
+        c2: output channels
+        n: number of bottlenecks
+        shortcut: whether to use shortcut in bottlenecks
+        g: kept for compatibility with YOLO parser, not used directly
+        e: expansion ratio
+        rank_ratio: rank compression ratio
+        act: activation
+    """
+
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        n: int = 1,
+        shortcut: bool = False,
+        g: int = 1,
+        e: float = 0.5,
+        rank_ratio: float = 0.5,
+        act: bool = True,
+    ):
+        super().__init__()
+
+        self.c = int(c2 * e)
+
+        # Low-rank input projection: c1 -> 2c
+        self.cv1 = LRConv1x1(
+            c1,
+            2 * self.c,
+            rank_ratio=rank_ratio,
+            act=act,
+        )
+
+        # Tucker Bottlenecks
+        self.m = nn.ModuleList(
+            TuckerBottleneck(
+                self.c,
+                self.c,
+                shortcut=shortcut,
+                e=1.0,
+                rank_ratio=rank_ratio,
+                act=act,
+            )
+            for _ in range(n)
+        )
+
+        # Low-rank output fusion: (2+n)c -> c2
+        self.cv2 = LRConv1x1(
+            (2 + n) * self.c,
+            c2,
+            rank_ratio=rank_ratio,
+            act=act,
+        )
+
+    def forward(self, x):
+        y = list(self.cv1(x).chunk(2, dim=1))
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, dim=1))
+
+    def forward_split(self, x):
+        y = list(self.cv1(x).split((self.c, self.c), dim=1))
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, dim=1))
 
 
 

@@ -26,6 +26,8 @@ __all__ = (
     "SpatialAttention",
     "DSC_LR_Conv",
     "LRPointwise",
+    "LRConv1x1",
+    "TuckerConv3x3",
 )
 
 
@@ -753,7 +755,130 @@ class DSC_LR_Conv(nn.Module):
             y = x + y
 
         return y
+class LRConv1x1(nn.Module):
+    """
+    Low-Rank 1x1 Convolution.
 
+    Standard 1x1 Conv:
+        Cin -> Cout
+
+    Low-rank 1x1 Conv:
+        Cin -> rank -> Cout
+
+    This module is used to reduce the parameters of pointwise convolutions
+    in C2f, especially cv1 and cv2.
+    """
+
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        rank: int | None = None,
+        rank_ratio: float = 0.5,
+        act: bool = True,
+    ):
+        super().__init__()
+
+        if rank is None:
+            rank = max(8, int(min(c1, c2) * rank_ratio))
+
+        self.rank = rank
+
+        self.reduce = Conv(
+            c1,
+            self.rank,
+            k=1,
+            s=1,
+            act=act,
+        )
+
+        self.expand = Conv(
+            self.rank,
+            c2,
+            k=1,
+            s=1,
+            act=act,
+        )
+
+    def forward(self, x):
+        return self.expand(self.reduce(x))
+
+
+class TuckerConv3x3(nn.Module):
+    """
+    Tucker-style decomposition for 3x3 Convolution.
+
+    Standard 3x3 Conv:
+        Cin -> Cout with 3x3 kernel
+
+    Tucker-style Conv:
+        1x1 reduce
+        3x1 spatial conv
+        1x3 spatial conv
+        1x1 expand
+
+    This keeps an effective 3x3 receptive field while reducing parameters.
+    """
+
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        rank: int | None = None,
+        rank_ratio: float = 0.5,
+        act: bool = True,
+    ):
+        super().__init__()
+
+        if rank is None:
+            rank = max(8, int(min(c1, c2) * rank_ratio))
+
+        self.rank = rank
+
+        # 1x1 channel reduction
+        self.reduce = Conv(
+            c1,
+            self.rank,
+            k=1,
+            s=1,
+            act=act,
+        )
+
+        # 3x1 spatial decomposition
+        self.conv_3x1 = Conv(
+            self.rank,
+            self.rank,
+            k=(3, 1),
+            s=1,
+            p=(1, 0),
+            act=act,
+        )
+
+        # 1x3 spatial decomposition
+        self.conv_1x3 = Conv(
+            self.rank,
+            self.rank,
+            k=(1, 3),
+            s=1,
+            p=(0, 1),
+            act=act,
+        )
+
+        # 1x1 channel expansion
+        self.expand = Conv(
+            self.rank,
+            c2,
+            k=1,
+            s=1,
+            act=act,
+        )
+
+    def forward(self, x):
+        x = self.reduce(x)
+        x = self.conv_3x1(x)
+        x = self.conv_1x3(x)
+        x = self.expand(x)
+        return x
 
 
 
