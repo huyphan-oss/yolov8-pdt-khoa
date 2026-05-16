@@ -2162,6 +2162,7 @@ class Bottleneck_LR(nn.Module):
         c2: int,
         shortcut: bool = True,
         e: float = 0.5,
+        rank: int | None = None,
         act: bool = True
     ):
         super().__init__()
@@ -2174,8 +2175,10 @@ class Bottleneck_LR(nn.Module):
         # ---------------------------------
 
 
-        #accuracy-oriented:
-        self.rank = max(8, c2 // 8)
+        if rank is None: 
+            self.rank = max(8, c2 // 8) 
+        else: 
+            self.rank = rank
 
         # ---------------------------------
         # INPUT LOW-RANK PROJECTION
