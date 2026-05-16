@@ -76,7 +76,7 @@ from ultralytics.nn.modules import (
     C2f_LR,
     TuckerBottleneck,
     LRTuckerC2f,
-    RConv1x1,
+    LRConv1x1,
     TuckerConv3x3,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, WINDOWS, YAML, colorstr, emojis
@@ -1618,7 +1618,7 @@ def parse_model(d, ch, verbose=True):
             C2f_LR,
             TuckerBottleneck,
             LRTuckerC2f,
-            RConv1x1,
+            LRConv1x1,
             TuckerConv3x3,
         }
     )
