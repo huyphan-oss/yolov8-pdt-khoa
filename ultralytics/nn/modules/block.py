@@ -2152,6 +2152,7 @@ class Bottleneck_LR(nn.Module):
     Bottleneck optimized with:
     - Depthwise Separable Convolution
     - Low-Rank Pointwise Decomposition
+    - Auto Rank Scaling
     - Residual shortcut
     """
 
@@ -2161,36 +2162,44 @@ class Bottleneck_LR(nn.Module):
         c2: int,
         shortcut: bool = True,
         e: float = 0.5,
-        rank: int = 16,
         act: bool = True
     ):
         super().__init__()
 
+        # hidden channels
         c_ = int(c2 * e)
 
-        # -----------------------------
-        # 1x1 Low-rank reduce
+        # ---------------------------------
+        # AUTO RANK
+        # ---------------------------------
+
+
+        #accuracy-oriented:
+        self.rank = max(8, c2 // 8)
+
+        # ---------------------------------
+        # INPUT LOW-RANK PROJECTION
         # c1 -> rank -> c_
-        # -----------------------------
+        # ---------------------------------
         self.pw1_reduce = Conv(
             c1,
-            rank,
+            self.rank,
             k=1,
             s=1,
             act=act
         )
 
         self.pw1_expand = Conv(
-            rank,
+            self.rank,
             c_,
             k=1,
             s=1,
             act=act
         )
 
-        # -----------------------------
-        # Depthwise 3x3
-        # -----------------------------
+        # ---------------------------------
+        # DEPTHWISE 3x3
+        # ---------------------------------
         self.dw = Conv(
             c_,
             c_,
@@ -2200,20 +2209,20 @@ class Bottleneck_LR(nn.Module):
             act=act
         )
 
-        # -----------------------------
-        # 1x1 Low-rank projection
+        # ---------------------------------
+        # OUTPUT LOW-RANK PROJECTION
         # c_ -> rank -> c2
-        # -----------------------------
+        # ---------------------------------
         self.pw2_reduce = Conv(
             c_,
-            rank,
+            self.rank,
             k=1,
             s=1,
             act=act
         )
 
         self.pw2_expand = Conv(
-            rank,
+            self.rank,
             c2,
             k=1,
             s=1,
@@ -2225,11 +2234,15 @@ class Bottleneck_LR(nn.Module):
 
     def forward(self, x):
 
-        y = self.pw1_expand(self.pw1_reduce(x))
+        y = self.pw1_expand(
+            self.pw1_reduce(x)
+        )
 
         y = self.dw(y)
 
-        y = self.pw2_expand(self.pw2_reduce(y))
+        y = self.pw2_expand(
+            self.pw2_reduce(y)
+        )
 
         if self.add:
             y = x + y
@@ -2237,81 +2250,45 @@ class Bottleneck_LR(nn.Module):
         return y
 
 
+
+
 class C2f_LR(nn.Module):
-    """
-    C2f optimized with:
-    - Depthwise Separable Convolution
-    - Low-Rank Pointwise Decomposition
-    - Residual Bottleneck
-    """
 
     def __init__(
         self,
-        c1: int,
-        c2: int,
-        n: int = 1,
-        shortcut: bool = False,
-        e: float = 0.5,
-        rank: int = 16,
-        act: bool = True
+        c1,
+        c2,
+        n=1,
+        shortcut=False,
+        e=0.5,
+        act=True
     ):
         super().__init__()
 
         self.c = int(c2 * e)
 
-        # -----------------------------------
-        # Input low-rank projection
-        # c1 -> rank -> 2c
-        # -----------------------------------
-        self.cv1_reduce = Conv(
-            c1,
-            rank,
-            k=1,
-            s=1,
-            act=act
-        )
+        # AUTO RANK
+        self.rank = max(8, c2 // 8)
 
-        self.cv1_expand = Conv(
-            rank,
-            2 * self.c,
-            k=1,
-            s=1,
-            act=act
-        )
+        # Input projection
+        self.cv1_reduce = Conv(c1, self.rank, 1, 1)
+        self.cv1_expand = Conv(self.rank, 2 * self.c, 1, 1)
 
-        # -----------------------------------
-        # Bottleneck blocks
-        # -----------------------------------
+        # Bottlenecks
         self.m = nn.ModuleList(
             Bottleneck_LR(
                 self.c,
                 self.c,
                 shortcut=shortcut,
                 e=1.0,
-                rank=max(8, self.c // 8)
+                rank=max(8, self.c // 16)
             )
             for _ in range(n)
         )
 
-        # -----------------------------------
-        # Output fusion low-rank
-        # (2+n)c -> rank -> c2
-        # -----------------------------------
-        self.cv2_reduce = Conv(
-            (2 + n) * self.c,
-            rank,
-            k=1,
-            s=1,
-            act=act
-        )
-
-        self.cv2_expand = Conv(
-            rank,
-            c2,
-            k=1,
-            s=1,
-            act=act
-        )
+        # Output fusion
+        self.cv2_reduce = Conv((2 + n) * self.c, self.rank, 1, 1)
+        self.cv2_expand = Conv(self.rank, c2, 1, 1)
 
     def forward(self, x):
 
@@ -2325,11 +2302,10 @@ class C2f_LR(nn.Module):
 
         y = torch.cat(y, 1)
 
-        y = self.cv2_expand(
+        return self.cv2_expand(
             self.cv2_reduce(y)
         )
 
-        return y
 
 
 

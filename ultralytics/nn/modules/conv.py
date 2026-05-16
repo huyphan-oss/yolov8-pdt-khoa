@@ -670,7 +670,13 @@ class Index(nn.Module):
         """
         return x[self.index]
 
+
 class DSC_LR_Conv(nn.Module):
+    """
+    Depthwise Separable Convolution
+    + Low-Rank Pointwise Decomposition
+    + Auto Rank Scaling
+    """
 
     def __init__(
         self,
@@ -678,15 +684,30 @@ class DSC_LR_Conv(nn.Module):
         c2,
         k=3,
         s=1,
-        rank=16,
         act=True
     ):
         super().__init__()
 
+        # ---------------------------------
+        # AUTO RANK
+        # ---------------------------------
+
+        # balanced
+        #self.rank = max(8, c2 // 16)
+
+        # lightweight version:
+        # self.rank = max(4, c2 // 32)
+
+        #accuracy version:
+        self.rank = max(8, c2 // 8)
+
+        # ---------------------------------
+        # DEPTHWISE CONV
+        # ---------------------------------
         self.dw = nn.Sequential(
             nn.Conv2d(
-                c1,
-                c1,
+                in_channels=c1,
+                out_channels=c1,
                 kernel_size=k,
                 stride=s,
                 padding=k // 2,
@@ -694,24 +715,46 @@ class DSC_LR_Conv(nn.Module):
                 bias=False
             ),
             nn.BatchNorm2d(c1),
-            nn.SiLU()
+            nn.SiLU(inplace=True)
         )
 
-        self.reduce = Conv(c1, rank, 1, 1)
-        self.expand = Conv(rank, c2, 1, 1)
+        # ---------------------------------
+        # LOW-RANK POINTWISE
+        # c1 -> rank -> c2
+        # ---------------------------------
+        self.reduce = Conv(
+            c1,
+            self.rank,
+            k=1,
+            s=1,
+            act=act
+        )
 
+        self.expand = Conv(
+            self.rank,
+            c2,
+            k=1,
+            s=1,
+            act=act
+        )
+
+        # residual
         self.add = (s == 1 and c1 == c2)
 
     def forward(self, x):
 
         y = self.dw(x)
 
-        y = self.expand(self.reduce(y))
+        y = self.expand(
+            self.reduce(y)
+        )
 
         if self.add:
-            y = y + x
+            y = x + y
 
         return y
+
+
 
 
 
