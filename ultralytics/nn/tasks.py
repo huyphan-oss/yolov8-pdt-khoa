@@ -74,6 +74,10 @@ from ultralytics.nn.modules import (
     v10Detect,
     DSC_LR_Conv,
     C2f_LR,
+    TuckerBottleneck,
+    LRTuckerC2f,
+    RConv1x1,
+    TuckerConv3x3,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, WINDOWS, YAML, colorstr, emojis
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
