@@ -60,6 +60,7 @@ from .block import (
     SCDown,
     TorchVision,
     DualSKP,
+    C2f_LR,
 
 )
 from .conv import (
@@ -193,4 +194,5 @@ __all__ = (
     "v10Detect",
     "DualSKP",
     "DSC_LR_Conv",
+    "C2f_LR",
 )

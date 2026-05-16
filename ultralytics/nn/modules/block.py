@@ -53,6 +53,7 @@ __all__ = (
     "SCDown",
     "TorchVision",
     "DualSKP",
+    "C2f_LR",
 )
 
 
@@ -2144,4 +2145,193 @@ class DualSKP(nn.Module):
         y = [y[0], y[1]]
         y.extend(m(y[-1]) for m in self.m)
         return self.cv2(torch.cat(y, 1))
+    
+
+class Bottleneck_LR(nn.Module):
+    """
+    Bottleneck optimized with:
+    - Depthwise Separable Convolution
+    - Low-Rank Pointwise Decomposition
+    - Residual shortcut
+    """
+
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        shortcut: bool = True,
+        e: float = 0.5,
+        rank: int = 16,
+        act: bool = True
+    ):
+        super().__init__()
+
+        c_ = int(c2 * e)
+
+        # -----------------------------
+        # 1x1 Low-rank reduce
+        # c1 -> rank -> c_
+        # -----------------------------
+        self.pw1_reduce = Conv(
+            c1,
+            rank,
+            k=1,
+            s=1,
+            act=act
+        )
+
+        self.pw1_expand = Conv(
+            rank,
+            c_,
+            k=1,
+            s=1,
+            act=act
+        )
+
+        # -----------------------------
+        # Depthwise 3x3
+        # -----------------------------
+        self.dw = Conv(
+            c_,
+            c_,
+            k=3,
+            s=1,
+            g=c_,
+            act=act
+        )
+
+        # -----------------------------
+        # 1x1 Low-rank projection
+        # c_ -> rank -> c2
+        # -----------------------------
+        self.pw2_reduce = Conv(
+            c_,
+            rank,
+            k=1,
+            s=1,
+            act=act
+        )
+
+        self.pw2_expand = Conv(
+            rank,
+            c2,
+            k=1,
+            s=1,
+            act=act
+        )
+
+        # residual
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+
+        y = self.pw1_expand(self.pw1_reduce(x))
+
+        y = self.dw(y)
+
+        y = self.pw2_expand(self.pw2_reduce(y))
+
+        if self.add:
+            y = x + y
+
+        return y
+
+
+class C2f_LR(nn.Module):
+    """
+    C2f optimized with:
+    - Depthwise Separable Convolution
+    - Low-Rank Pointwise Decomposition
+    - Residual Bottleneck
+    """
+
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        n: int = 1,
+        shortcut: bool = False,
+        e: float = 0.5,
+        rank: int = 16,
+        act: bool = True
+    ):
+        super().__init__()
+
+        self.c = int(c2 * e)
+
+        # -----------------------------------
+        # Input low-rank projection
+        # c1 -> rank -> 2c
+        # -----------------------------------
+        self.cv1_reduce = Conv(
+            c1,
+            rank,
+            k=1,
+            s=1,
+            act=act
+        )
+
+        self.cv1_expand = Conv(
+            rank,
+            2 * self.c,
+            k=1,
+            s=1,
+            act=act
+        )
+
+        # -----------------------------------
+        # Bottleneck blocks
+        # -----------------------------------
+        self.m = nn.ModuleList(
+            Bottleneck_LR(
+                self.c,
+                self.c,
+                shortcut=shortcut,
+                e=1.0,
+                rank=max(8, self.c // 8)
+            )
+            for _ in range(n)
+        )
+
+        # -----------------------------------
+        # Output fusion low-rank
+        # (2+n)c -> rank -> c2
+        # -----------------------------------
+        self.cv2_reduce = Conv(
+            (2 + n) * self.c,
+            rank,
+            k=1,
+            s=1,
+            act=act
+        )
+
+        self.cv2_expand = Conv(
+            rank,
+            c2,
+            k=1,
+            s=1,
+            act=act
+        )
+
+    def forward(self, x):
+
+        y = list(
+            self.cv1_expand(
+                self.cv1_reduce(x)
+            ).chunk(2, 1)
+        )
+
+        y.extend(m(y[-1]) for m in self.m)
+
+        y = torch.cat(y, 1)
+
+        y = self.cv2_expand(
+            self.cv2_reduce(y)
+        )
+
+        return y
+
+
+
+
 

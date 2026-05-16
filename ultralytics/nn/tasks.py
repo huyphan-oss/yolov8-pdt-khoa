@@ -74,6 +74,7 @@ from ultralytics.nn.modules import (
     v10Detect,
     DualSKP,
     DSC_LR_Conv,
+    C2f_LR,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, WINDOWS, YAML, colorstr, emojis
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1612,6 +1613,7 @@ def parse_model(d, ch, verbose=True):
             A2C2f,
             DualSKP,
             DSC_LR_Conv,
+            C2f_LR,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
