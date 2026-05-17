@@ -62,6 +62,7 @@ from .block import (
     C2f_LR,
     TuckerBottleneck,
     LRTuckerC2f,
+    LRFuseC2f,
 
 )
 from .conv import (
@@ -200,4 +201,5 @@ __all__ = (
     "TuckerConv3x3",
     "TuckerBottleneck",
     "LRTuckerC2f",
+    "LRFuseC2f",
 )

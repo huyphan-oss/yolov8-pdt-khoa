@@ -55,6 +55,7 @@ __all__ = (
     "C2f_LR",
     "TuckerBottleneck",
     "LRTuckerC2f",
+    "LRFuseC2f",
 )
 
 
@@ -2416,6 +2417,67 @@ class LRTuckerC2f(nn.Module):
         y = list(self.cv1(x).split((self.c, self.c), dim=1))
         y.extend(m(y[-1]) for m in self.m)
         return self.cv2(torch.cat(y, dim=1))
+    
+class LRFuseC2f(nn.Module):
+    """
+    LRFuseC2f: C2f with Low-rank fusion convolution.
+
+    Difference from original C2f:
+        - cv1: keep original Conv 1x1
+        - Bottleneck: keep original Bottleneck
+        - cv2: replace original Conv 1x1 with Low-rank Conv 1x1
+
+    This is more FPS/INT8 friendly than LRTuckerC2f because it does not
+    decompose every Bottleneck into many small conv layers.
+    """
+
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        n: int = 1,
+        shortcut: bool = False,
+        g: int = 1,
+        e: float = 0.5,
+        rank_ratio: float = 0.5,
+    ):
+        super().__init__()
+
+        self.c = int(c2 * e)
+
+        # Original C2f cv1
+        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
+
+        # Original C2f Bottleneck blocks
+        self.m = nn.ModuleList(
+            Bottleneck(
+                self.c,
+                self.c,
+                shortcut,
+                g,
+                k=((3, 3), (3, 3)),
+                e=1.0,
+            )
+            for _ in range(n)
+        )
+
+        # Low-rank fusion conv: replace cv2 only
+        self.cv2 = LRConv1x1(
+            (2 + n) * self.c,
+            c2,
+            rank_ratio=rank_ratio,
+            act=True,
+        )
+
+    def forward(self, x):
+        y = list(self.cv1(x).chunk(2, 1))
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1))
+
+    def forward_split(self, x):
+        y = list(self.cv1(x).split((self.c, self.c), 1))
+        y.extend(m(y[-1]) for m in self.m)
+        return self.cv2(torch.cat(y, 1))
 
 
 

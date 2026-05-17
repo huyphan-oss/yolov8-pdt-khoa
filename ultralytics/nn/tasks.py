@@ -78,6 +78,7 @@ from ultralytics.nn.modules import (
     LRTuckerC2f,
     LRConv1x1,
     TuckerConv3x3,
+    LRFuseC2f,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, WINDOWS, YAML, colorstr, emojis
 from ultralytics.utils.checks import check_requirements, check_suffix, check_yaml
@@ -1620,6 +1621,7 @@ def parse_model(d, ch, verbose=True):
             LRTuckerC2f,
             LRConv1x1,
             TuckerConv3x3,
+            LRFuseC2f,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
