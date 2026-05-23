@@ -686,22 +686,16 @@ class DSC_LR_Conv(nn.Module):
         c2,
         k=3,
         s=1,
-        act=True
+        act=True,
+        rank=None,
+        rank_ratio=0.125,
+        rank_min=8,
     ):
         super().__init__()
 
-        # ---------------------------------
-        # AUTO RANK
-        # ---------------------------------
-
-        # balanced
-        #self.rank = max(8, c2 // 16)
-
-        # lightweight version:
-        # self.rank = max(4, c2 // 32)
-
-        #accuracy version:
-        self.rank = max(8, c2 // 8)
+        if rank is None:
+            rank = max(rank_min, int(min(c1, c2) * rank_ratio))
+        self.rank = min(min(c1, c2), int(rank))
 
         # ---------------------------------
         # DEPTHWISE CONV
@@ -755,6 +749,8 @@ class DSC_LR_Conv(nn.Module):
             y = x + y
 
         return y
+
+
 class LRConv1x1(nn.Module):
     """
     Low-Rank 1x1 Convolution.
@@ -879,7 +875,6 @@ class TuckerConv3x3(nn.Module):
         x = self.conv_1x3(x)
         x = self.expand(x)
         return x
-
 
 
 
