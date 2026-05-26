@@ -16,11 +16,22 @@ from ultralytics.utils.tal import dist2bbox, dist2rbox, make_anchors
 from ultralytics.utils.torch_utils import TORCH_1_11, fuse_conv_and_bn, smart_inference_mode
 
 from .block import DFL, SAVPE, BNContrastiveHead, ContrastiveHead, Proto, Proto26, RealNVP, Residual, SwiGLUFFN
-from .conv import Conv, DWConv
+from .conv import Conv, DSC_LR_Conv, DWConv
 from .transformer import MLP, DeformableTransformerDecoder, DeformableTransformerDecoderLayer
 from .utils import bias_init_with_prob, linear_init
 
-__all__ = "OBB", "Classify", "Detect", "Pose", "RTDETRDecoder", "Segment", "YOLOEDetect", "YOLOESegment", "v10Detect"
+__all__ = (
+    "OBB",
+    "Classify",
+    "Detect",
+    "DSCDetect",
+    "Pose",
+    "RTDETRDecoder",
+    "Segment",
+    "YOLOEDetect",
+    "YOLOESegment",
+    "v10Detect",
+)
 
 
 class Detect(nn.Module):
@@ -249,6 +260,41 @@ class Detect(nn.Module):
     def fuse(self) -> None:
         """Remove the one2many head for inference optimization."""
         self.cv2 = self.cv3 = None
+
+
+class DSCDetect(Detect):
+    """Lightweight Detect head using DSC_LR_Conv in box and class branches."""
+
+    def __init__(
+        self,
+        nc: int = 80,
+        reg_max=16,
+        end2end=False,
+        ch: tuple = (),
+        rank_ratio=0.125,
+        rank_min=8,
+    ):
+        super().__init__(nc, reg_max, end2end, ch)
+        c2, c3 = max((16, ch[0] // 4, self.reg_max * 4)), max(ch[0], min(self.nc, 100))
+        self.cv2 = nn.ModuleList(
+            nn.Sequential(
+                DSC_LR_Conv(x, c2, 3, 1, True, None, rank_ratio, rank_min),
+                DSC_LR_Conv(c2, c2, 3, 1, True, None, rank_ratio, rank_min),
+                nn.Conv2d(c2, 4 * self.reg_max, 1),
+            )
+            for x in ch
+        )
+        self.cv3 = nn.ModuleList(
+            nn.Sequential(
+                DSC_LR_Conv(x, c3, 3, 1, True, None, rank_ratio, rank_min),
+                DSC_LR_Conv(c3, c3, 3, 1, True, None, rank_ratio, rank_min),
+                nn.Conv2d(c3, self.nc, 1),
+            )
+            for x in ch
+        )
+        if end2end:
+            self.one2one_cv2 = copy.deepcopy(self.cv2)
+            self.one2one_cv3 = copy.deepcopy(self.cv3)
 
 
 class Segment(Detect):
