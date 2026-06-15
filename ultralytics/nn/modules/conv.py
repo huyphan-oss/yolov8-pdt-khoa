@@ -27,7 +27,9 @@ __all__ = (
     "DSC_LR_Conv",
     "LRPointwise",
     "LRConv1x1",
+    "LRConv1x1Lite",
     "TuckerConv3x3",
+    "TuckerConv3x3Lite",
 )
 
 
@@ -800,6 +802,35 @@ class LRConv1x1(nn.Module):
         return self.expand(self.reduce(x))
 
 
+class LRConv1x1Lite(nn.Module):
+    """
+    Low-rank 1x1 convolution with only one normalization/activation stage.
+
+    The first projection is linear to reduce kernel launches and BN/activation
+    overhead while keeping the same low-rank factorization idea.
+    """
+
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        rank: int | None = None,
+        rank_ratio: float = 0.5,
+        act: bool = True,
+    ):
+        super().__init__()
+
+        if rank is None:
+            rank = max(8, int(min(c1, c2) * rank_ratio))
+
+        self.rank = rank
+        self.reduce = nn.Conv2d(c1, self.rank, 1, 1, 0, bias=False)
+        self.expand = Conv(self.rank, c2, k=1, s=1, act=act)
+
+    def forward(self, x):
+        return self.expand(self.reduce(x))
+
+
 class TuckerConv3x3(nn.Module):
     """
     Tucker-style decomposition for 3x3 Convolution.
@@ -868,6 +899,42 @@ class TuckerConv3x3(nn.Module):
             s=1,
             act=act,
         )
+
+    def forward(self, x):
+        x = self.reduce(x)
+        x = self.conv_3x1(x)
+        x = self.conv_1x3(x)
+        x = self.expand(x)
+        return x
+
+
+class TuckerConv3x3Lite(nn.Module):
+    """
+    Tucker-style 3x3 convolution with linear intermediate factors.
+
+    Only the final expansion keeps BN/activation. This preserves the tensor
+    decomposition structure but removes repeated normalization/activation from
+    the small factorized convolutions.
+    """
+
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        rank: int | None = None,
+        rank_ratio: float = 0.5,
+        act: bool = True,
+    ):
+        super().__init__()
+
+        if rank is None:
+            rank = max(8, int(min(c1, c2) * rank_ratio))
+
+        self.rank = rank
+        self.reduce = nn.Conv2d(c1, self.rank, 1, 1, 0, bias=False)
+        self.conv_3x1 = nn.Conv2d(self.rank, self.rank, (3, 1), 1, (1, 0), bias=False)
+        self.conv_1x3 = nn.Conv2d(self.rank, self.rank, (1, 3), 1, (0, 1), bias=False)
+        self.expand = Conv(self.rank, c2, k=1, s=1, act=act)
 
     def forward(self, x):
         x = self.reduce(x)

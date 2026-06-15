@@ -9,7 +9,7 @@ import torch.nn.functional as F
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
-from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, LRConv1x1, TuckerConv3x3, autopad
+from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, LRConv1x1, LRConv1x1Lite, TuckerConv3x3, TuckerConv3x3Lite, autopad
 from .transformer import TransformerBlock
 
 __all__ = (
@@ -2312,16 +2312,17 @@ class TuckerBottleneck(nn.Module):
 
         c_ = int(c2 * e)
 
-        # Low-rank 1x1 projection
-        self.cv1 = LRConv1x1(
+        # Low-rank 1x1 projection. The lite variant keeps intermediate
+        # factors linear to reduce repeated BN/activation overhead.
+        self.cv1 = LRConv1x1Lite(
             c1,
             c_,
             rank_ratio=rank_ratio,
             act=act,
         )
 
-        # Tucker-style 3x3 convolution
-        self.cv2 = TuckerConv3x3(
+        # Tucker-style 3x3 convolution with linear factors.
+        self.cv2 = TuckerConv3x3Lite(
             c_,
             c2,
             rank_ratio=rank_ratio,
@@ -2380,7 +2381,7 @@ class LRTuckerC2f(nn.Module):
         self.c = int(c2 * e)
 
         # Low-rank input projection: c1 -> 2c
-        self.cv1 = LRConv1x1(
+        self.cv1 = LRConv1x1Lite(
             c1,
             2 * self.c,
             rank_ratio=rank_ratio,
@@ -2401,7 +2402,7 @@ class LRTuckerC2f(nn.Module):
         )
 
         # Low-rank output fusion: (2+n)c -> c2
-        self.cv2 = LRConv1x1(
+        self.cv2 = LRConv1x1Lite(
             (2 + n) * self.c,
             c2,
             rank_ratio=rank_ratio,

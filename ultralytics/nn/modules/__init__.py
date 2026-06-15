@@ -82,7 +82,9 @@ from .conv import (
     SpatialAttention,
     DSC_LR_Conv,
     LRConv1x1,
+    LRConv1x1Lite,
     TuckerConv3x3,
+    TuckerConv3x3Lite,
 )
 from .head import (
     OBB,
@@ -200,7 +202,9 @@ __all__ = (
     "DSC_LR_Conv",
     "C2f_LR",
     "LRConv1x1",
+    "LRConv1x1Lite",
     "TuckerConv3x3",
+    "TuckerConv3x3Lite",
     "TuckerBottleneck",
     "LRTuckerC2f",
     "LRFuseC2f",
